@@ -30,7 +30,7 @@ type GetTaskArgs struct {
 
 type GetTaskReply struct {
 	InputFiles []string
-	isMap      bool
+	IsMap      bool
 	NumReduce  int
 	TaskNumber int
 }

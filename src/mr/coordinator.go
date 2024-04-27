@@ -33,7 +33,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			if !c.processedInputFiles[filename] {
 				reply.InputFiles = []string{filename}
 				reply.NumReduce = c.numReduce
-				reply.isMap = true
+				reply.IsMap = true
 				reply.TaskNumber = c.taskNumber
 				c.processedInputFiles[filename] = true
 			}

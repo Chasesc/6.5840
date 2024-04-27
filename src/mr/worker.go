@@ -38,12 +38,9 @@ func readFile(filename string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-	if err != nil {
-		log.Fatalf("cannot open %v", filename)
-	}
 	content, err := io.ReadAll(file)
 	if err != nil {
-		log.Fatalf("cannot read %v", filename)
+		return "", err
 	}
 
 	return string(content), nil
@@ -64,7 +61,9 @@ func Worker(mapf func(string, string) []KeyValue,
 			break
 		}
 		time.Sleep(time.Second)
-		readAndExecuteTask(task, mapf, reducef)
+		if err := readAndExecuteTask(task, mapf, reducef); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
@@ -115,12 +114,17 @@ func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) 
 	return nil
 }
 
-func readAndExecuteTask(task *GetTaskReply, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	if task.isMap {
-		executeMapTask(task, mapf)
+func readAndExecuteTask(task *GetTaskReply, mapf func(string, string) []KeyValue, reducef func(string, []string) string) error {
+	var err error
+	if task.IsMap {
+		fmt.Printf("running a map %v\n", task)
+		err = executeMapTask(task, mapf)
 	} else {
-		executeReduceTask(task, reducef)
+		fmt.Printf("running a reduce %v\n", task)
+		err = executeReduceTask(task, reducef)
 	}
+
+	return err
 }
 
 func CallGetTask() *GetTaskReply {
