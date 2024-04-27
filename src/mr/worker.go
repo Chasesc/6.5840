@@ -1,48 +1,153 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
-
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func readFile(filename string) (string, error) {
+	file, err := os.Open(string(filename))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
 
-//
+	return string(content), nil
+}
+
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
+	// Each worker process will, in a loop, ask the coordinator for a task,
+	// read the task's input from one or more files, execute the task, write
+	// the task's output to one or more files, and again ask the coordinator for a new task.
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
+	for {
+		task := CallGetTask()
+		if task == nil {
+			fmt.Println("task is nil. stopping.")
+			break
+		}
+		time.Sleep(time.Second)
+		readAndExecuteTask(task, mapf, reducef)
+	}
 }
 
-//
+func makeIntermediateKVStore(mapOut []KeyValue, numReduce int) [][]KeyValue {
+	estimatedChunkSize := len(mapOut) / numReduce
+	intermediate := make([][]KeyValue, numReduce)
+	for i := 0; i < numReduce; i++ {
+		intermediate[i] = make([]KeyValue, 0, estimatedChunkSize)
+	}
+
+	for _, val := range mapOut {
+		idx := ihash(val.Key) % numReduce
+		intermediate[idx] = append(intermediate[idx], val)
+	}
+
+	return intermediate
+}
+
+func saveMapOutputForReducer(mapTask *GetTaskReply, intermediate [][]KeyValue) error {
+	for i := 0; i < mapTask.NumReduce; i++ {
+		taskFileName := fmt.Sprintf("mr-%d-%d.json", mapTask.TaskNumber, i)
+		jsonData, err := json.Marshal(intermediate[i])
+		if err != nil {
+			return err
+		}
+		err = os.WriteFile(taskFileName, jsonData, 0644)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func executeMapTask(mapTask *GetTaskReply, mapf func(string, string) []KeyValue) error {
+	// The map phase should divide the intermediate keys into buckets for numReduce reduce tasks
+	// Each mapper should create numReduce intermediate files for consumption by the reduce tasks.
+	filename := mapTask.InputFiles[0] // maps only have one input file.
+	contents, err := readFile(filename)
+	if err != nil {
+		return err
+	}
+	mapOut := mapf(filename, contents)
+	intermediate := makeIntermediateKVStore(mapOut, mapTask.NumReduce)
+	return saveMapOutputForReducer(mapTask, intermediate)
+}
+
+func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) string) error {
+	return nil
+}
+
+func readAndExecuteTask(task *GetTaskReply, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	if task.isMap {
+		executeMapTask(task, mapf)
+	} else {
+		executeReduceTask(task, reducef)
+	}
+}
+
+func CallGetTask() *GetTaskReply {
+
+	// declare an argument structure.
+	args := GetTaskArgs{}
+
+	// declare a reply structure.
+	reply := GetTaskReply{}
+
+	// send the RPC request, wait for the reply.
+	ok := call("Coordinator.GetTask", &args, &reply)
+	if !ok {
+		fmt.Printf("call failed!\n")
+		return nil
+	}
+
+	if len(reply.InputFiles) > 0 {
+		return &reply
+	}
+
+	return nil
+}
+
 // example function to show how to make an RPC call to the coordinator.
 //
 // the RPC argument and reply types are defined in rpc.go.
-//
 func CallExample() {
 
 	// declare an argument structure.
@@ -67,11 +172,9 @@ func CallExample() {
 	}
 }
 
-//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
