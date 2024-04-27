@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -83,16 +84,32 @@ func makeIntermediateKVStore(mapOut []KeyValue, numReduce int) [][]KeyValue {
 }
 
 func saveMapOutputForReducer(mapTask *GetTaskReply, intermediate [][]KeyValue) error {
+	errChan := make(chan error, mapTask.NumReduce)
+	var wg sync.WaitGroup
+
 	for i := 0; i < mapTask.NumReduce; i++ {
-		taskFileName := fmt.Sprintf("mr-%d-%d.json", mapTask.TaskNumber, i)
-		jsonData, err := json.Marshal(intermediate[i])
-		if err != nil {
-			return err
-		}
-		err = os.WriteFile(taskFileName, jsonData, 0644)
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			taskFileName := fmt.Sprintf("mr-%d-%d.json", mapTask.TaskNumber, i)
+			jsonData, err := json.Marshal(intermediate[i])
+			if err != nil {
+				errChan <- err
+				return
+			}
+			err = os.WriteFile(taskFileName, jsonData, 0644)
+			if err != nil {
+				errChan <- err
+				return
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	if len(errChan) > 0 {
+		return <-errChan
 	}
 	return nil
 }
