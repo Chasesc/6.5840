@@ -186,7 +186,8 @@ func loadAllInputForReduce(reduceTask *GetTaskReply) ([]KeyValue, error) {
 }
 
 func reduceAndSaveOutputToFile(reduceTask *GetTaskReply, sortedReducerInput []KeyValue, reducef func(string, []string) string) error {
-	oname := fmt.Sprintf("mr-out-%d", reduceTask.TaskNumber)
+	// We write to a tmp file and then rename at the end incase our reducer crashes.
+	oname := fmt.Sprintf("mr-out-%d-tmp", reduceTask.TaskNumber)
 	ofile, err := os.Create(oname)
 	if err != nil {
 		return err
@@ -211,7 +212,9 @@ func reduceAndSaveOutputToFile(reduceTask *GetTaskReply, sortedReducerInput []Ke
 		i = j
 	}
 
-	return nil
+	finalName := fmt.Sprintf("mr-out-%d", reduceTask.TaskNumber)
+
+	return os.Rename(oname, finalName)
 }
 
 func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) string) error {

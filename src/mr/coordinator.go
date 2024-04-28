@@ -65,7 +65,10 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 				reply.TaskNumber = mrState.taskNumber
 				c.processedInputFiles[filename].mapperStarted = true
 				reclaimWorkCb := func() {
+					c.mu.Lock()
+					fmt.Printf("in mapper reclaim work CB for file %s\n", filename)
 					c.processedInputFiles[filename].mapperStarted = false
+					c.mu.Unlock()
 				}
 				go reclaimWorkIfWorkerDied(c.mapperOutputFileNames(mrState.taskNumber), reclaimWorkCb)
 			}
@@ -88,7 +91,10 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 				reply.TaskNumber = i
 				c.reducerStarted[i] = true
 				reclaimWorkCb := func() {
+					c.mu.Lock()
+					fmt.Printf("in reducer reclaim work CB for reducerNumber %d\n", i)
 					c.reducerStarted[i] = false
+					c.mu.Unlock()
 				}
 				go reclaimWorkIfWorkerDied(c.reducerOutputFileNames(i), reclaimWorkCb)
 			}
