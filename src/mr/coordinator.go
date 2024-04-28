@@ -126,14 +126,24 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-// main/mrcoordinator.go calls Done() periodically to find out
-// if the entire job has finished.
-func (c *Coordinator) Done() bool {
+func (c *Coordinator) reducerFinished() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	for reducerNumber, thisReducerStarted := range c.reducerStarted {
+		if !thisReducerStarted || !fileExists(fmt.Sprintf("mr-out-%d", reducerNumber)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// main/mrcoordinator.go calls Done() periodically to find out
+// if the entire job has finished.
+func (c *Coordinator) Done() bool {
 	// Your code here.
-	return false // FIXME: return true when the reducers finish.
+	return c.reducerFinished()
 }
 
 // create a Coordinator.
