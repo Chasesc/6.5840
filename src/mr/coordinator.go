@@ -8,7 +8,10 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
+
+const ASSUME_WORKER_DEAD_AFTER = 10 * time.Second
 
 func fileExists(filename string) bool {
 	info, err := os.Stat(filename)
@@ -32,6 +35,17 @@ type Coordinator struct {
 	attemptsWithoutWork int
 }
 
+func reclaimWorkIfWorkerDied(expectedFiles []string, notFinishedCallback func()) {
+	time.Sleep(ASSUME_WORKER_DEAD_AFTER)
+
+	for _, filename := range expectedFiles {
+		if !fileExists(filename) {
+			notFinishedCallback()
+			return
+		}
+	}
+}
+
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	c.mu.RLock()
@@ -50,6 +64,10 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 				reply.IsMap = true
 				reply.TaskNumber = mrState.taskNumber
 				c.processedInputFiles[filename].mapperStarted = true
+				reclaimWorkCb := func() {
+					c.processedInputFiles[filename].mapperStarted = false
+				}
+				go reclaimWorkIfWorkerDied(c.mapperOutputFileNames(mrState.taskNumber), reclaimWorkCb)
 			}
 			return nil
 		}
@@ -65,10 +83,14 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			// double check the condition after acquiring the write lock.
 			if !c.reducerStarted[i] {
 				c.attemptsWithoutWork = 0
-				reply.InputFiles = c.reducerFileNames(i)
+				reply.InputFiles = c.reducerInputFileNames(i)
 				reply.IsMap = false
 				reply.TaskNumber = i
 				c.reducerStarted[i] = true
+				reclaimWorkCb := func() {
+					c.reducerStarted[i] = false
+				}
+				go reclaimWorkIfWorkerDied(c.reducerOutputFileNames(i), reclaimWorkCb)
 			}
 			return nil
 		}
@@ -86,7 +108,22 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	return nil
 }
 
-func (c *Coordinator) reducerFileNames(reducerNumber int) []string {
+func (c *Coordinator) mapperOutputFileNames(mapNumber int) []string {
+	filenames := make([]string, c.numReduce)
+	for i := 0; i < c.numReduce; i++ {
+		// reducers need all mappers to be done! We get all mapper inputs
+		// that have the same reduce task number
+		filenames[i] = fmt.Sprintf("mr-%d-%d.json", mapNumber, i)
+	}
+
+	return filenames
+}
+
+func (c *Coordinator) reducerOutputFileNames(reducerNumber int) []string {
+	return []string{fmt.Sprintf("mr-out-%d", reducerNumber)}
+}
+
+func (c *Coordinator) reducerInputFileNames(reducerNumber int) []string {
 	numMappers := len(c.processedInputFiles)
 	filenames := make([]string, numMappers)
 	for i := 0; i < numMappers; i++ {
@@ -103,7 +140,7 @@ func (c *Coordinator) readyToStartReducer(reducerNumber int) bool {
 		return false // already started.
 	}
 
-	for _, reducerInputFilename := range c.reducerFileNames(reducerNumber) {
+	for _, reducerInputFilename := range c.reducerInputFileNames(reducerNumber) {
 		// our mapper should really create tempfiles and atomically rename so we don't
 		// return true when we are still writing to the file, but lets see if I decide to implement that.
 		if !fileExists(reducerInputFilename) {

@@ -287,9 +287,6 @@ else
 fi
 rm -f mr-*
 
-# TODO: implement crash recovery.
-exit 0
-
 #########################################################
 echo '***' Starting crash test.
 
