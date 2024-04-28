@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -127,8 +128,99 @@ func executeMapTask(mapTask *GetTaskReply, mapf func(string, string) []KeyValue)
 	return saveMapOutputForReducer(mapTask, intermediate)
 }
 
-func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) string) error {
+func loadSingleReduceInput(filename string) ([]KeyValue, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	var kvs []KeyValue
+	if err := decoder.Decode(&kvs); err != nil {
+		return nil, err
+	}
+
+	return kvs, nil
+}
+
+func loadAllInputForReduce(reduceTask *GetTaskReply) ([]KeyValue, error) {
+	var reducerInput []KeyValue
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	numFiles := len(reduceTask.InputFiles)
+	singleFileInputChan := make(chan []KeyValue, numFiles)
+	errChan := make(chan error, numFiles)
+
+	for _, filename := range reduceTask.InputFiles {
+		wg.Add(1)
+		go func(filename string) {
+			defer wg.Done()
+			kvs, err := loadSingleReduceInput(filename)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			singleFileInputChan <- kvs
+		}(filename)
+	}
+
+	wg.Wait()
+	close(singleFileInputChan)
+	close(errChan)
+
+	if len(errChan) > 0 {
+		return nil, <-errChan
+	}
+
+	for kvs := range singleFileInputChan {
+		mu.Lock()
+		reducerInput = append(reducerInput, kvs...)
+		mu.Unlock()
+	}
+
+	return reducerInput, nil
+}
+
+func reduceAndSaveOutputToFile(reduceTask *GetTaskReply, sortedReducerInput []KeyValue, reducef func(string, []string) string) error {
+	oname := fmt.Sprintf("mr-out-%d", reduceTask.TaskNumber)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		return err
+	}
+	defer ofile.Close()
+
+	i := 0
+	for i < len(sortedReducerInput) {
+		j := i + 1
+		for j < len(sortedReducerInput) && sortedReducerInput[j].Key == sortedReducerInput[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, sortedReducerInput[k].Value)
+		}
+		output := reducef(sortedReducerInput[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", sortedReducerInput[i].Key, output)
+
+		i = j
+	}
+
 	return nil
+}
+
+func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) string) error {
+	reducerInput, err := loadAllInputForReduce(reduceTask)
+	if err != nil {
+		return err
+	}
+
+	sort.Sort(ByKey(reducerInput))
+
+	return reduceAndSaveOutputToFile(reduceTask, reducerInput, reducef)
 }
 
 func readAndExecuteTask(task *GetTaskReply, mapf func(string, string) []KeyValue, reducef func(string, []string) string) error {
