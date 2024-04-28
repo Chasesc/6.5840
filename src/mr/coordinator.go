@@ -96,7 +96,6 @@ func (c *Coordinator) readyToStartReducer(reducerNumber int) bool {
 		// our mapper should really create tempfiles and atomically rename so we don't
 		// return true when we are still writing to the file, but lets see if I decide to implement that.
 		if !fileExists(reducerInputFilename) {
-			fmt.Printf("cannot start reducer %v DNE\n", reducerInputFilename)
 			return false
 		}
 	}
