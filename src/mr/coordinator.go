@@ -29,6 +29,7 @@ type Coordinator struct {
 	numReduce           int
 	processedInputFiles map[string]*mapState
 	reducerStarted      []bool
+	attemptsWithoutWork int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -43,6 +44,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 			// double check the condition after acquiring the write lock.
 			if !c.processedInputFiles[filename].mapperStarted {
+				c.attemptsWithoutWork = 0
 				reply.InputFiles = []string{filename}
 				reply.NumReduce = c.numReduce
 				reply.IsMap = true
@@ -53,7 +55,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		}
 	}
 
-	// All mappers have started. We can now start the reducers
+	// All mappers have started. We can now try to start the reducers
 	for i := range c.reducerStarted {
 		if c.readyToStartReducer(i) {
 			c.mu.RUnlock()
@@ -62,6 +64,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 			// double check the condition after acquiring the write lock.
 			if !c.reducerStarted[i] {
+				c.attemptsWithoutWork = 0
 				reply.InputFiles = c.reducerFileNames(i)
 				reply.IsMap = false
 				reply.TaskNumber = i
@@ -72,6 +75,14 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	}
 
 	c.mu.RUnlock()
+	c.mu.Lock() // Acquire the write lock
+	defer c.mu.Unlock()
+
+	c.attemptsWithoutWork += 1
+	if c.attemptsWithoutWork > 3 { // kinda arbitrary
+		reply.Quit = true
+	}
+
 	return nil
 }
 

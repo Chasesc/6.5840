@@ -59,7 +59,9 @@ func Worker(mapf func(string, string) []KeyValue,
 	for {
 		task := CallGetTask()
 		if task == nil {
-			fmt.Println("task is nil. stopping.")
+			continue
+		}
+		if task.Quit { // told to stop.
 			break
 		}
 		time.Sleep(time.Second)
@@ -226,10 +228,10 @@ func executeReduceTask(reduceTask *GetTaskReply, reducef func(string, []string) 
 func readAndExecuteTask(task *GetTaskReply, mapf func(string, string) []KeyValue, reducef func(string, []string) string) error {
 	var err error
 	if task.IsMap {
-		fmt.Printf("running a map %v\n", task)
+		// fmt.Printf("running a map %v\n", task)
 		err = executeMapTask(task, mapf)
 	} else {
-		fmt.Printf("running a reduce %v\n", task)
+		// fmt.Printf("running a reduce %v\n", task)
 		err = executeReduceTask(task, reducef)
 	}
 
@@ -247,8 +249,8 @@ func CallGetTask() *GetTaskReply {
 	// send the RPC request, wait for the reply.
 	ok := call("Coordinator.GetTask", &args, &reply)
 	if !ok {
-		fmt.Printf("call failed!\n")
-		return nil
+		reply.Quit = true
+		return &reply
 	}
 
 	if len(reply.InputFiles) > 0 {

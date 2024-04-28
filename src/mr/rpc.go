@@ -33,6 +33,7 @@ type GetTaskReply struct {
 	IsMap      bool
 	NumReduce  int
 	TaskNumber int
+	Quit       bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name
