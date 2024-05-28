@@ -10,6 +10,7 @@ import (
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
+	clientID int64
 }
 
 func nrand() int64 {
@@ -23,6 +24,7 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
 	// You'll have to add code here.
+	ck.clientID = nrand()
 	return ck
 }
 
@@ -60,7 +62,7 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	// You will have to modify this function.
 
-	args := PutAppendArgs{Key: key, Value: value, IdempotencyKey: randstring(32)}
+	args := PutAppendArgs{Key: key, Value: value, IdempotencyKey: randstring(32), ClientID: ck.clientID}
 	reply := PutAppendReply{}
 
 	for !ck.server.Call("KVServer."+op, &args, &reply) {
